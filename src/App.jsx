@@ -1,15 +1,15 @@
 import React, { useRef, useState, useEffect } from "react";
-import * as tf from "@tensorflow/tfjs";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+
+import { initializeReader, predictCanvas } from "./ai/reader";
 
 export default function App() {
   const canvasRef = useRef(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [prediction, setPrediction] = useState(null);
   const [confidences, setConfidences] = useState(Array(10).fill(0));
-  const [model, setModel] = useState(null);
-  
+
   // Custom Controls State
   const [brushSize, setBrushSize] = useState(16);
   const [brushColor, setBrushColor] = useState("#18181b"); 
@@ -18,25 +18,25 @@ export default function App() {
   const [mousePos, setMousePos] = useState({ x: -100, y: -100 });
 
   useEffect(() => {
-    async function loadModel() {
-      try {
-        const loadedModel = await tf.loadLayersModel(
-          "https://googleapis.com"
-        );
-        setModel(loadedModel);
-      } catch (err) {
-        console.error("AI engine layout structural initialization error", err);
-      }
-    }
-    loadModel();
+    initializeReader();
 
     const handleGlobalMouseMove = (e) => {
-      setMousePos({ x: e.clientX, y: e.clientY });
+      setMousePos({
+        x: e.clientX,
+        y: e.clientY
+      });
     };
 
-    window.addEventListener("mousemove", handleGlobalMouseMove);
+    window.addEventListener(
+      "mousemove",
+      handleGlobalMouseMove
+    );
+
     return () => {
-      window.removeEventListener("mousemove", handleGlobalMouseMove);
+      window.removeEventListener(
+        "mousemove",
+        handleGlobalMouseMove
+      );
     };
   }, []);
 
@@ -96,25 +96,19 @@ export default function App() {
 
   // --- Real-Time Neural Signal Array Operations ---
   const recognizeDigit = async () => {
-    if (!model || !canvasRef.current) return;
-    const canvas = canvasRef.current;
+    if (!canvasRef.current) {
+      return;
+    }
 
-    tf.tidy(() => {
-      let tensor = tf.browser.fromPixels(canvas, 1)
-        .resizeNearestNeighbor()
-        .mean(2)
-        .expandDims(2)
-        .expandDims()
-        .toFloat()
-        .div(255.0);
+    try {
+      const result = predictCanvas( canvasRef.current);
 
-      const predictionResult = model.predict(tensor);
-      const probabilities = predictionResult.dataSync();
-      const maxVal = predictionResult.argMax(1).dataSync();
-      
-      setPrediction(maxVal.toString());
-      setConfidences(Array.from(probabilities));
-    });
+      setPrediction( result.prediction.toString());
+
+      setConfidences(resultconfidences);
+    } catch (error) {
+      console.error( "AI prediction failed:", error );
+    }
   };
 
   return (

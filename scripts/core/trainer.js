@@ -15,7 +15,7 @@ export class Trainer {
       options.learningRate ?? 0.001;
 
     this.epochs =
-      options.epochs ?? 10;
+      options.epochs ?? 3;
 
     this.batchSize =
       options.batchSize ?? 32;
@@ -25,28 +25,20 @@ export class Trainer {
   }
 
   train(dataset) {
-    if (dataset.size === 0) {
+    if (!dataset || dataset.count === 0) {
       throw new Error(
         'Cannot train on an empty dataset.'
       );
     }
 
-    console.log(
-      `Training ${dataset.size} samples`
-    );
-
-    console.log(
-      `Epochs: ${this.epochs}`
-    );
-
-    console.log(
-      `Batch size: ${this.batchSize}`
-    );
-
-    console.log(
-      `Learning rate: ${this.learningRate}`
-    );
-
+    console.log('');
+    console.log('==============================');
+    console.log('       MNIST TRAINING');
+    console.log('==============================');
+    console.log(`Samples: ${dataset.count}`);
+    console.log(`Epochs: ${this.epochs}`);
+    console.log(`Batch size: ${this.batchSize}`);
+    console.log(`Learning rate: ${this.learningRate}`);
     console.log('');
 
     const history = [];
@@ -56,40 +48,54 @@ export class Trainer {
       epoch <= this.epochs;
       epoch++
     ) {
-      if (this.shuffle) {
-        dataset.shuffle();
-      }
+      const indices =
+        this.shuffle
+          ? this.createShuffledIndices(dataset.count)
+          : null;
 
       let totalLoss = 0;
       let totalCorrect = 0;
       let totalSamples = 0;
 
-      const batches =
-        dataset.batch(
-          this.batchSize
+      const batchCount =
+        Math.ceil(
+          dataset.count / this.batchSize
         );
+
+      const epochStart =
+        Date.now();
 
       for (
-        const samples of batches
+        let batchIndex = 0;
+        batchIndex < batchCount;
+        batchIndex++
       ) {
-        const {
-          inputs,
-          targets
-        } = this.createImageBatch(
-          samples
-        );
+        const start =
+          batchIndex * this.batchSize;
+
+        const actualBatchSize =
+          Math.min(
+            this.batchSize,
+            dataset.count - start
+          );
+
+        const batch =
+          this.createBatch(
+            dataset,
+            indices,
+            start,
+            actualBatchSize
+          );
 
         // --------------------------
-        // ONE FORWARD PASS
+        // FORWARD
         // --------------------------
 
         const logits =
           this.model.forward(
-            inputs
+            batch.inputs
           );
 
-        // Convert logits to
-        // probabilities.
         const predictions =
           softmax(logits);
 
@@ -100,11 +106,11 @@ export class Trainer {
         const loss =
           crossEntropy(
             predictions,
-            targets
+            batch.targets
           );
 
         totalLoss +=
-          loss * samples.length;
+          loss * actualBatchSize;
 
         // --------------------------
         // ACCURACY
@@ -116,69 +122,56 @@ export class Trainer {
         ] = predictions.shape;
 
         for (
-          let batch = 0;
-          batch < batchSize;
-          batch++
+          let b = 0;
+          b < batchSize;
+          b++
         ) {
-          let predictionClass = 0;
+          let predictedClass = 0;
           let targetClass = 0;
 
           for (
-            let classIndex = 1;
-            classIndex < classCount;
-            classIndex++
+            let c = 1;
+            c < classCount;
+            c++
           ) {
-            const predictionIndex =
-              batch * classCount +
-              classIndex;
+            const index =
+              b * classCount + c;
 
-            const currentPrediction =
-              batch * classCount +
-              predictionClass;
+            const predictedCurrent =
+              b * classCount +
+              predictedClass;
 
             if (
-              predictions.data[
-                predictionIndex
-              ] >
-              predictions.data[
-                currentPrediction
-              ]
+              predictions.data[index] >
+              predictions.data[predictedCurrent]
             ) {
-              predictionClass =
-                classIndex;
+              predictedClass = c;
             }
 
             const targetIndex =
-              batch * classCount +
-              classIndex;
+              b * classCount + c;
 
-            const currentTarget =
-              batch * classCount +
+            const targetCurrent =
+              b * classCount +
               targetClass;
 
             if (
-              targets.data[
-                targetIndex
-              ] >
-              targets.data[
-                currentTarget
-              ]
+              batch.targets.data[targetIndex] >
+              batch.targets.data[targetCurrent]
             ) {
-              targetClass =
-                classIndex;
+              targetClass = c;
             }
           }
 
           if (
-            predictionClass ===
-            targetClass
+            predictedClass === targetClass
           ) {
             totalCorrect++;
           }
         }
 
         totalSamples +=
-          samples.length;
+          actualBatchSize;
 
         // --------------------------
         // BACKWARD
@@ -187,147 +180,189 @@ export class Trainer {
         const gradient =
           softmaxCrossEntropyGradient(
             predictions,
-            targets
+            batch.targets
           );
 
         this.model.backward(
           gradient,
           this.learningRate
         );
+
+        // --------------------------
+        // PROGRESS
+        // --------------------------
+
+        if (
+          batchIndex % 10 === 0 ||
+          batchIndex === batchCount - 1
+        ) {
+          const percent =
+            (
+              ((batchIndex + 1) /
+                batchCount) *
+              100
+            ).toFixed(1);
+
+          process.stdout.write(
+            `\rEpoch ${epoch}/${this.epochs} ` +
+            `[${percent}%]`
+          );
+        }
       }
 
       const averageLoss =
-        totalLoss /
-        totalSamples;
+        totalLoss / totalSamples;
 
       const accuracy =
-        totalCorrect /
-        totalSamples;
+        totalCorrect / totalSamples;
+
+      const elapsed =
+        ((Date.now() - epochStart) / 1000)
+          .toFixed(1);
 
       const result = {
         epoch,
         loss: averageLoss,
-        accuracy
+        accuracy,
+        seconds: Number(elapsed)
       };
 
       history.push(result);
 
+      console.log('');
+
       console.log(
         `Epoch ${epoch}/${this.epochs} ` +
         `| loss: ${averageLoss.toFixed(4)} ` +
-        `| accuracy: ${(accuracy * 100).toFixed(2)}%`
+        `| accuracy: ${(accuracy * 100).toFixed(2)}% ` +
+        `| ${elapsed}s`
       );
+
+      console.log('');
     }
+
+    console.log(
+      'Training complete.'
+    );
 
     return history;
   }
 
-  createImageBatch(samples) {
-    if (samples.length === 0) {
-      throw new Error(
-        'Cannot create an empty image batch.'
-      );
-    }
-
-    const firstInput =
-      samples[0].input;
-
-    const firstTarget =
-      samples[0].target;
-
-    if (
-      firstInput.shape.length !== 3
-    ) {
-      throw new Error(
-        'Trainer expects image inputs shaped [channels, height, width].'
-      );
-    }
-
-    const [
-      channels,
-      height,
-      width
-    ] = firstInput.shape;
-
-    const classCount =
-      firstTarget.size;
-
+  createBatch(
+    dataset,
+    indices,
+    start,
+    batchSize
+  ) {
     const imageSize =
-      channels *
-      height *
-      width;
+      dataset.rows *
+      dataset.cols;
 
-    const inputs =
+    const inputData =
       new Float32Array(
-        samples.length *
-        imageSize
+        batchSize * imageSize
       );
 
-    const targets =
+    const targetData =
       new Float32Array(
-        samples.length *
-        classCount
+        batchSize * 10
       );
 
     for (
       let i = 0;
-      i < samples.length;
+      i < batchSize;
       i++
     ) {
-      const input =
-        samples[i].input;
+      const datasetIndex =
+        indices
+          ? indices[start + i]
+          : start + i;
 
-      const target =
-        samples[i].target;
+      const imageStart =
+        datasetIndex * imageSize;
 
-      if (
-        input.shape.length !== 3 ||
-        input.shape[0] !== channels ||
-        input.shape[1] !== height ||
-        input.shape[2] !== width
+      const inputStart =
+        i * imageSize;
+
+      // MNIST pixels:
+      // 0   = background
+      // 255 = digit
+      for (
+        let p = 0;
+        p < imageSize;
+        p++
       ) {
-        throw new Error(
-          'All images in a batch must have the same shape.'
-        );
+        inputData[
+          inputStart + p
+        ] =
+          dataset.images[
+            imageStart + p
+          ] / 255;
       }
 
-      if (
-        target.size !== classCount
-      ) {
-        throw new Error(
-          'All targets in a batch must have the same size.'
-        );
-      }
+      const label =
+        dataset.labels[
+          datasetIndex
+        ];
 
-      inputs.set(
-        input.data,
-        i * imageSize
-      );
-
-      targets.set(
-        target.data,
-        i * classCount
-      );
+      targetData[
+        i * 10 + label
+      ] = 1;
     }
 
     return {
       inputs: new Tensor(
-        inputs,
+        inputData,
         [
-          samples.length,
-          channels,
-          height,
-          width
+          batchSize,
+          1,
+          dataset.rows,
+          dataset.cols
         ]
       ),
 
       targets: new Tensor(
-        targets,
+        targetData,
         [
-          samples.length,
-          classCount
+          batchSize,
+          10
         ]
       )
     };
+  }
+
+  createShuffledIndices(count) {
+    const indices =
+      new Uint32Array(count);
+
+    for (
+      let i = 0;
+      i < count;
+      i++
+    ) {
+      indices[i] = i;
+    }
+
+    for (
+      let i = count - 1;
+      i > 0;
+      i--
+    ) {
+      const j =
+        Math.floor(
+          Math.random() * (i + 1)
+        );
+
+      const temp =
+        indices[i];
+
+      indices[i] =
+        indices[j];
+
+      indices[j] =
+        temp;
+    }
+
+    return indices;
   }
 }
